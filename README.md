@@ -1,59 +1,59 @@
-# HardwareMonitor — плагін моніторингу системи для Logitech / Loupedeck
+# HardwareMonitor — system monitoring plugin for Logitech / Loupedeck
 
-Плагін (`.lplug4`) для Logitech MX Creative Console та сумісних пристроїв, який показує живі показники **CPU, GPU та RAM** з [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) прямо на кнопках пристрою.
+A plugin (`.lplug4`) for Logitech MX Creative Console and compatible devices that shows live **CPU, GPU and RAM** stats from [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) right on the device buttons.
 
-## Чому цей плагін існує
+## Why this plugin exists
 
-Я зробив цей плагін для себе — виникла потреба бачити ключові показники системи завжди перед очима. Переглянув існуючі рішення на маркетплейсі, але жодне не підходило повністю ні за функціоналом, ні за зовнішнім виглядом. Тому написав власний — з допомогою штучного інтелекту.
+I built this plugin for myself because I needed key system stats always in front of me. I looked through the existing solutions on the marketplace, but none fit my needs — neither in functionality nor in appearance. So I decided to write my own, with the help of AI.
 
-## Можливості
+## Features
 
-- **CPU** — навантаження, температура, частота (MHz)
-- **GPU** — навантаження, температура, обсяг VRAM (used / total)
-- **RAM** — навантаження, використано / всього, вільна пам'ять
-- Спарклайн історії навантаження на кожній картці
-- Кольорове кодування (зелений / жовтий / червоний) залежно від значення
-- Оновлення в реальному часі (кожні ~1,5 с)
-- Автовизначення заліза — працює з AMD та Intel CPU, NVIDIA, AMD GPU
+- **CPU** — load, temperature, clock speed (MHz)
+- **GPU** — load, temperature, VRAM usage (used / total)
+- **RAM** — load, used / total, free memory
+- Load-history sparkline on every card
+- Color coding (green / amber / red) based on the value
+- Real-time updates (every ~1.5 s)
+- Universal hardware detection — works with AMD and Intel CPUs, NVIDIA and AMD GPUs
 
-## Вимоги
+## Requirements
 
-- Logitech MX Creative Console або сумісний Loupedeck-пристрій
-- Windows (підтримка macOS закладена в проєкт)
-- [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) з увімкненим веб-сервером (порт 8085) — інакше кнопки показуватимуть `Offline`
+- Logitech MX Creative Console or a compatible Loupedeck device
+- Windows
+- [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) with the web server enabled (port 8085) — otherwise buttons show `Offline`
 
-## Встановлення
+## Installation
 
-1. Завантажте `HardwareMonitor.lplug4` з [релізів](https://github.com/GavryschukOleg/HardwareMonitor/releases).
-2. Двічі клікніть файл — Logi Plugin Service встановить плагін автоматично.
-3. Увімкніть веб-сервер у LibreHardwareMonitor (Settings → Web server → port 8085).
-4. У Logi Options+ призначте дії **CPU**, **GPU**, **RAM** на кнопки.
+1. Download `HardwareMonitor.lplug4` from the [releases](https://github.com/GavryschukOleg/HardwareMonitor/releases) page.
+2. Double-click the file — Logi Plugin Service installs the plugin automatically.
+3. Enable the web server in LibreHardwareMonitor (Settings → Web server → port 8085).
+4. In Logi Options+, assign the **CPU**, **GPU** and **RAM** actions to buttons.
 
-### Встановлення через командний рядок
+### Installation via command line
 
 ```powershell
 logiplugintool install ./HardwareMonitor.lplug4
 ```
 
-## Збірка з вихідного коду
+## Building from source
 
-Потрібен Logi Plugin Service SDK і .NET 10:
+Requires the Logi Plugin Service SDK and .NET 10:
 
 ```powershell
 dotnet build -c Release
 logiplugintool pack ./bin/Release ./HardwareMonitor.lplug4
 ```
 
-## Використання джерела даних
+## Data source
 
-Плагін читає `http://127.0.0.1:8085/data.json`. Без запущеного веб-сервера LibreHardwareMonitor кнопки показують `Offline`.
+The plugin reads `http://127.0.0.1:8085/data.json`. Without the LibreHardwareMonitor web server running, the buttons show `Offline`.
 
-## Підтримати проєкт
+## Support the project
 
-Якщо плагін вам знадобився і хочете підтримати розробку — завжди радий донат-каві 🙂
+If you find this plugin useful and want to support development — a coffee donation is always welcome 🙂
 
-[![Підтримати через PayPal](https://img.shields.io/badge/PayPal-Підтримати-00457C?style=for-the-badge&logo=paypal&logoColor=white)](https://paypal.me/donicteck)
+[![Donate via PayPal](https://img.shields.io/badge/PayPal-Donate-00457C?style=for-the-badge&logo=paypal&logoColor=white)](https://paypal.me/donicteck)
 
-## Ліцензія
+## License
 
 [MIT](https://opensource.org/licenses/MIT)
