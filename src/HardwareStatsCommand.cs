@@ -131,17 +131,21 @@ namespace Loupedeck.HardwareMonitorPlugin
             // load-history sparkline, and centered footer line(s). The big value is
             // colored by the metric itself (CPU/GPU temperature, RAM load%); the
             // sparkline and the title load% by load%.
-            var titleFont = Math.Max(14, Math.Min(16, (Int32)(height * 0.14)));
-            var primaryFont = Math.Max(24, Math.Min(28, (Int32)(height * 0.24)));
+            // Fonts are kept in a narrow band for a consistent look: title/load%
+            // row ~16-18, big value ~20-24, footer ~13-15. Long footers (GPU
+            // "8.0 / 12.0 GB", RAM used/total) use the smaller end so they don't
+            // run off the button; short ones (CPU "4800 MHz") stay a bit bigger.
+            var titleFont = Math.Max(16, Math.Min(18, (Int32)(height * 0.15)));
+            var primaryFont = Math.Max(20, Math.Min(24, (Int32)(height * 0.20)));
             var hasFooter2 = !String.IsNullOrEmpty(data.Footer2);
-            var footerFont = hasFooter2
-                ? Math.Max(12, Math.Min(14, (Int32)(height * 0.12)))
-                : Math.Max(14, Math.Min(16, (Int32)(height * 0.14)));
+            var footerFont = (hasFooter2 || (data.Footer1?.Length ?? 0) > 10)
+                ? Math.Max(12, Math.Min(13, (Int32)(height * 0.11)))
+                : Math.Max(13, Math.Min(15, (Int32)(height * 0.13)));
 
-            var titleY = 6;
-            var primaryY = Math.Max(26, (Int32)(height * 0.23));
-            var sparkY = Math.Max(52, (Int32)(height * 0.46));
-            var sparkHeight = Math.Max(18, (Int32)(height * 0.20));
+            var titleY = 4;
+            var primaryY = Math.Max(30, (Int32)(height * 0.26));
+            var sparkY = Math.Max(58, (Int32)(height * 0.50));
+            var sparkHeight = Math.Max(24, (Int32)(height * 0.22));
             var footerY = height - Math.Max(20, (Int32)(height * 0.17));
 
             var loadColor = ColorForValue(data.LoadPercent);
