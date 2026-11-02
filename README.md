@@ -52,8 +52,8 @@ The plugin reads `http://127.0.0.1:8085/data.json`. Without the LibreHardwareMon
 
 If you find this plugin useful and want to support development — a coffee donation is always welcome 🙂
 
-[![Donate via PayPal](https://img.shields.io/badge/PayPal-Donate-00457C?style=for-the-badge&logo=paypal&logoColor=white)](https://paypal.me/donicteck)
+[![Donate via PayPal](https://img.shields.io/badge/PayPal-Donate-00457C?style=for-the-badge&logo=paypal&logoColor=white)](https://www.paypal.com/donate/?business=donicteck%40gmail.com&currency_code=USD)
 
 ## License
 
-[MIT](https://opensource.org/licenses/MIT)
+[MIT](LICENSE) © 2026 GO

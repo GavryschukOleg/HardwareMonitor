@@ -19,6 +19,7 @@ namespace Loupedeck.HardwareMonitorPlugin
 
         public override void Unload()
         {
+            HardwareMonitorClient.Shutdown();
             PluginLog.Info("HardwareMonitor plugin unloaded");
         }
     }

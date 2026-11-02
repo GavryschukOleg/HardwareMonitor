@@ -44,66 +44,61 @@ namespace Loupedeck.HardwareMonitorPlugin
             "fancontroller",
         };
 
+        // One poll interval for all buttons. LibreHardwareMonitor itself refreshes about once per second.
+        private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(1.5);
+
+        private static readonly Object InstanceLock = new();
+        private static HardwareMonitorClient _instance;
+
         private readonly HttpClient _httpClient;
-        private readonly SemaphoreSlim _refreshLock = new(1, 1);
-        private readonly TimeSpan _cacheDuration = TimeSpan.FromSeconds(1.2);
+        private readonly Timer _pollTimer;
 
-        private HardwareSnapshot _snapshot = HardwareSnapshot.Unavailable("Waiting for LibreHardwareMonitor");
-        private DateTime _lastRefreshUtc = DateTime.MinValue;
+        private volatile HardwareSnapshot _snapshot = HardwareSnapshot.Unavailable("Waiting for LibreHardwareMonitor");
+        private Int32 _pollInProgress;
+        private Boolean _lastFetchFailed;
+        private Boolean _disposed;
 
-        public HardwareMonitorClient()
+        // Raised on a background thread after every poll (successful or not). Static so that
+        // subscribers survive a Shutdown(): the next access to Shared starts a new client.
+        public static event EventHandler SnapshotUpdated;
+
+        // All CPU/GPU/RAM buttons share one client, so the plugin makes one HTTP request per interval
+        // instead of one per button, and rendering never waits on the network.
+        public static HardwareMonitorClient Shared
+        {
+            get
+            {
+                lock (InstanceLock)
+                {
+                    return _instance ??= new HardwareMonitorClient();
+                }
+            }
+        }
+
+        public static void Shutdown()
+        {
+            lock (InstanceLock)
+            {
+                _instance?.Dispose();
+                _instance = null;
+            }
+        }
+
+        private HardwareMonitorClient()
         {
             this._httpClient = new HttpClient
             {
-                Timeout = TimeSpan.FromSeconds(2),
+                Timeout = TimeSpan.FromSeconds(1.2),
             };
-        }
 
-        private async Task<HardwareSnapshot> GetSnapshotAsync()
-        {
-            if (DateTime.UtcNow - this._lastRefreshUtc < this._cacheDuration)
-            {
-                return this._snapshot;
-            }
-
-            await this._refreshLock.WaitAsync().ConfigureAwait(false);
-            try
-            {
-                if (DateTime.UtcNow - this._lastRefreshUtc < this._cacheDuration)
-                {
-                    return this._snapshot;
-                }
-
-                this._snapshot = await this.FetchSnapshotAsync().ConfigureAwait(false);
-                this._lastRefreshUtc = DateTime.UtcNow;
-                return this._snapshot;
-            }
-            finally
-            {
-                this._refreshLock.Release();
-            }
-        }
-
-        public String GetButtonText(HardwareStatKind kind)
-        {
-            try
-            {
-                var snapshot = this.GetSnapshotAsync().GetAwaiter().GetResult();
-                return snapshot.Format(kind);
-            }
-            catch (Exception ex)
-            {
-                PluginLog.Warning(ex, $"Failed to get {kind} stats");
-                return HardwareSnapshot.Unavailable("API error").Format(kind);
-            }
+            this._pollTimer = new Timer(this.OnPollTimer, null, TimeSpan.Zero, PollInterval);
         }
 
         public HardwareDisplayData GetDisplay(HardwareStatKind kind)
         {
             try
             {
-                var snapshot = this.GetSnapshotAsync().GetAwaiter().GetResult();
-                return snapshot.ToDisplay(kind);
+                return this._snapshot.ToDisplay(kind);
             }
             catch (Exception ex)
             {
@@ -114,8 +109,40 @@ namespace Loupedeck.HardwareMonitorPlugin
 
         public void Dispose()
         {
-            this._httpClient?.Dispose();
-            this._refreshLock?.Dispose();
+            if (this._disposed)
+            {
+                return;
+            }
+
+            this._disposed = true;
+            this._pollTimer.Dispose();
+            this._httpClient.Dispose();
+        }
+
+        private async void OnPollTimer(Object state)
+        {
+            // Skip a tick if the previous request is still running (e.g. LHM is slow to answer).
+            if (this._disposed || Interlocked.Exchange(ref this._pollInProgress, 1) == 1)
+            {
+                return;
+            }
+
+            try
+            {
+                this._snapshot = await this.FetchSnapshotAsync().ConfigureAwait(false);
+                if (!this._disposed)
+                {
+                    SnapshotUpdated?.Invoke(this, EventArgs.Empty);
+                }
+            }
+            catch (Exception ex)
+            {
+                PluginLog.Warning(ex, "Hardware poll failed");
+            }
+            finally
+            {
+                Interlocked.Exchange(ref this._pollInProgress, 0);
+            }
         }
 
         private async Task<HardwareSnapshot> FetchSnapshotAsync()
@@ -132,11 +159,23 @@ namespace Loupedeck.HardwareMonitorPlugin
 
                 FlattenSensors(root, sensors, String.Empty, String.Empty, String.Empty);
 
+                if (this._lastFetchFailed)
+                {
+                    this._lastFetchFailed = false;
+                    PluginLog.Info("LibreHardwareMonitor connection restored");
+                }
+
                 return HardwareSnapshot.FromSensors(sensors);
             }
             catch (Exception ex)
             {
-                PluginLog.Error(ex, "Failed to fetch hardware snapshot from local server");
+                // Log only the transition to offline; otherwise a stopped LHM floods the log every poll.
+                if (!this._lastFetchFailed)
+                {
+                    this._lastFetchFailed = true;
+                    PluginLog.Warning(ex, $"Cannot reach LibreHardwareMonitor at {DefaultApiUri}");
+                }
+
                 return HardwareSnapshot.Unavailable("No connection");
             }
         }
@@ -448,17 +487,6 @@ namespace Loupedeck.HardwareMonitorPlugin
                 return snapshot;
             }
 
-            public String Format(HardwareStatKind kind)
-            {
-                var data = this.ToDisplay(kind);
-                if (!data.Available)
-                {
-                    return $"{kind.ToString().ToUpper()}{Environment.NewLine}Offline{Environment.NewLine}--";
-                }
-
-                return String.Join(Environment.NewLine, data.Lines);
-            }
-
             public HardwareDisplayData ToDisplay(HardwareStatKind kind)
             {
                 if (!this.Available)
@@ -522,7 +550,7 @@ namespace Loupedeck.HardwareMonitorPlugin
 
             private String FormatTemp(Double? value) => value.HasValue ? $"{value.Value.ToString("F0", CultureInfo.InvariantCulture)}°C" : "--°C";
 
-            private String FormatGhz(Double? value) => value.HasValue ? $"{value.Value.ToString("F1", CultureInfo.InvariantCulture)}Ghz" : "--Ghz";
+            private String FormatGhz(Double? value) => value.HasValue ? $"{value.Value.ToString("F1", CultureInfo.InvariantCulture)}GHz" : "--GHz";
 
             private String FormatMhz(Double? valueGhZ) => valueGhZ.HasValue ? $"{(valueGhZ.Value * 1000.0).ToString("F0", CultureInfo.InvariantCulture)} MHz" : "-- MHz";
 
@@ -559,14 +587,14 @@ namespace Loupedeck.HardwareMonitorPlugin
                     return "-- GB";
                 }
 
-                var usedGb = this.GpuVramUsedMb.Value / 1024.0;
+                var usedGb = (this.GpuVramUsedMb.Value / 1024.0).ToString("F1", CultureInfo.InvariantCulture);
                 if (this.GpuVramTotalMb.HasValue)
                 {
-                    var totalGb = Math.Round(this.GpuVramTotalMb.Value / 1024.0, 0);
-                    return $"{usedGb:F1} / {totalGb}GB";
+                    var totalGb = Math.Round(this.GpuVramTotalMb.Value / 1024.0, 0).ToString("F0", CultureInfo.InvariantCulture);
+                    return $"{usedGb} / {totalGb}GB";
                 }
 
-                return $"{usedGb:F1} GB";
+                return $"{usedGb} GB";
             }
 
             private String FormatRamFree()
