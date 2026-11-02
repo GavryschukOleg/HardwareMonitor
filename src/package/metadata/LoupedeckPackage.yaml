@@ -18,7 +18,7 @@ description: Shows live CPU, GPU and RAM stats from LibreHardwareMonitor on devi
 pluginFileName: HardwareMonitorPlugin.dll
 
 # Plugin version.
-version: 1.0
+version: 1.1
 
 # Author of the plugin. The author can be a company or an individual developer.
 author: GO
@@ -44,6 +44,9 @@ supportedDevices:
     # LoupedeckCtFamily covers the following devices: Loupedeck CT, Live and Live S,
     # Razer Stream Controller, and Razer Stream Controller X.
     - LoupedeckCtFamily
+
+    # Logitech MX Creative Console family devices.
+    - LoupedeckExtendedFamily
 
     # LoupedeckPlusFamily covers Loupedeck+ device. Uncomment the following line to support Loupedeck+.
     #- LoupedeckPlusFamily

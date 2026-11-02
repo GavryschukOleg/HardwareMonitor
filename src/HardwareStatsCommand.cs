@@ -2,7 +2,6 @@ namespace Loupedeck.HardwareMonitorPlugin
 {
     using System;
     using System.Collections.Generic;
-    using System.Timers;
 
     // Card layout: title / main metric (left: load, right: big value) / load-history
     // sparkline / footer line(s). Colors follow the metric itself: the big value is
@@ -15,8 +14,6 @@ namespace Loupedeck.HardwareMonitorPlugin
     internal abstract class HardwareStatsCommand : PluginDynamicCommand, IDisposable
     {
         private readonly HardwareStatKind _kind;
-        private readonly HardwareMonitorClient _client;
-        private readonly Timer _timer;
         private readonly List<Double> _history = new();
         private readonly Object _historyLock = new();
 
@@ -28,7 +25,6 @@ namespace Loupedeck.HardwareMonitorPlugin
             : base(displayName: GetDisplayName(kind), description: GetDescription(kind), groupName: "Hardware Monitor")
         {
             this._kind = kind;
-            this._client = new HardwareMonitorClient();
 
             // Make these display-only widgets: widgets are image tiles shown without
             // the command-name caption (the "CPU" label under the button). The name
@@ -38,14 +34,8 @@ namespace Loupedeck.HardwareMonitorPlugin
             // exactly what a monitoring card needs.
             this.SetWidget(true);
 
-            this._timer = new Timer(1500)
-            {
-                AutoReset = true,
-                Enabled = true,
-            };
-
-            this._timer.Elapsed += this.OnTimerElapsed;
-            this._timer.Start();
+            // Redraw whenever the shared client has fresh data (one poll for all three buttons).
+            HardwareMonitorClient.SnapshotUpdated += this.OnSnapshotUpdated;
         }
 
         public void Dispose()
@@ -56,9 +46,7 @@ namespace Loupedeck.HardwareMonitorPlugin
             }
 
             this._disposed = true;
-            this._timer.Stop();
-            this._timer.Elapsed -= this.OnTimerElapsed;
-            this._timer.Dispose();
+            HardwareMonitorClient.SnapshotUpdated -= this.OnSnapshotUpdated;
         }
 
         protected override void RunCommand(String actionParameter)
@@ -75,7 +63,7 @@ namespace Loupedeck.HardwareMonitorPlugin
                 return null;
             }
 
-            var data = this._client.GetDisplay(this._kind);
+            var data = HardwareMonitorClient.Shared.GetDisplay(this._kind);
             var builder = new BitmapBuilder(imageSize);
             try
             {
@@ -88,7 +76,6 @@ namespace Loupedeck.HardwareMonitorPlugin
                     return builder.ToImage();
                 }
 
-                this.PushHistory(data.LoadPercent);
                 this.RenderCard(builder, data, imageSize);
 
                 return builder.ToImage();
@@ -305,10 +292,13 @@ namespace Loupedeck.HardwareMonitorPlugin
             _ => "Shows hardware stats from LibreHardwareMonitor",
         };
 
-        private void OnTimerElapsed(Object sender, ElapsedEventArgs e)
+        private void OnSnapshotUpdated(Object sender, EventArgs e)
         {
             try
             {
+                // Sample history once per poll, not per render: renders also happen on button
+                // presses and page switches, which used to make the sparkline uneven.
+                this.PushHistory(((HardwareMonitorClient)sender).GetDisplay(this._kind).LoadPercent);
                 this.ActionImageChanged();
             }
             catch (Exception ex)
