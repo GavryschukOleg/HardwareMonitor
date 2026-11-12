@@ -9,7 +9,6 @@ namespace Loupedeck.HardwareMonitorPlugin
         public HardwareMonitorPlugin()
         {
             PluginLog.Init(this.Log);
-            PluginResources.Init(this.Assembly);
         }
 
         public override void Load()
@@ -19,6 +18,8 @@ namespace Loupedeck.HardwareMonitorPlugin
 
         public override void Unload()
         {
+            HardwareCardCommand.DisposeAll();
+            HardwareMonitorClient.Instance.Dispose();
             PluginLog.Info("HardwareMonitor plugin unloaded");
         }
     }

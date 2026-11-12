@@ -8,6 +8,7 @@ namespace Loupedeck.HardwareMonitorPlugin
     using System.Text.Json;
     using System.Threading;
     using System.Threading.Tasks;
+    using System.Timers;
 
     internal enum HardwareStatKind
     {
@@ -44,78 +45,124 @@ namespace Loupedeck.HardwareMonitorPlugin
             "fancontroller",
         };
 
+        // Single shared instance polled in the background: CPU/GPU/RAM buttons used to
+        // each own a client, cache and timer, tripling the HTTP load on LibreHardwareMonitor
+        // for identical data. All three buttons now read the same cached snapshot.
+        public static readonly HardwareMonitorClient Instance = new();
+
         private readonly HttpClient _httpClient;
-        private readonly SemaphoreSlim _refreshLock = new(1, 1);
-        private readonly TimeSpan _cacheDuration = TimeSpan.FromSeconds(1.2);
+        private readonly System.Timers.Timer _pollTimer;
 
-        private HardwareSnapshot _snapshot = HardwareSnapshot.Unavailable("Waiting for LibreHardwareMonitor");
-        private DateTime _lastRefreshUtc = DateTime.MinValue;
+        // 0/1 guard (via Interlocked) instead of a lock: if a fetch is still in flight when
+        // the next tick fires (slow/hung network), the tick is skipped rather than queued.
+        private Int32 _isFetching;
 
-        public HardwareMonitorClient()
+        // null = no poll finished yet. Only touched inside FetchSnapshotAsync, which the guard above serializes.
+        private Boolean? _isConnected;
+
+        private volatile HardwareSnapshot _snapshot = HardwareSnapshot.Unavailable("Waiting for LibreHardwareMonitor");
+        private Boolean _disposed;
+
+        // One load history per metric, shared by every card style, one point per poll.
+        private const Int32 HistoryLength = 48;
+        private readonly List<Double>[] _history = { new(), new(), new() };
+        private readonly Object _historyLock = new();
+
+        // Raised after each poll (success or failure) so buttons can repaint on new data
+        // instead of each polling the network independently.
+        public event EventHandler SnapshotUpdated;
+
+        private HardwareMonitorClient()
         {
             this._httpClient = new HttpClient
             {
                 Timeout = TimeSpan.FromSeconds(2),
             };
+
+            this._pollTimer = new System.Timers.Timer(1500) { AutoReset = true };
+            this._pollTimer.Elapsed += this.OnPollTimerElapsed;
+            this._pollTimer.Start();
+
+            _ = this.RefreshAsync();
         }
 
-        private async Task<HardwareSnapshot> GetSnapshotAsync()
+        private void OnPollTimerElapsed(Object sender, ElapsedEventArgs e) => _ = this.RefreshAsync();
+
+        private async Task RefreshAsync()
         {
-            if (DateTime.UtcNow - this._lastRefreshUtc < this._cacheDuration)
+            if (Interlocked.CompareExchange(ref this._isFetching, 1, 0) != 0)
             {
-                return this._snapshot;
+                return;
             }
 
-            await this._refreshLock.WaitAsync().ConfigureAwait(false);
             try
             {
-                if (DateTime.UtcNow - this._lastRefreshUtc < this._cacheDuration)
-                {
-                    return this._snapshot;
-                }
-
-                this._snapshot = await this.FetchSnapshotAsync().ConfigureAwait(false);
-                this._lastRefreshUtc = DateTime.UtcNow;
-                return this._snapshot;
+                var snapshot = await this.FetchSnapshotAsync().ConfigureAwait(false);
+                this._snapshot = snapshot;
+                this.PushHistory(snapshot);
+                this.SnapshotUpdated?.Invoke(this, EventArgs.Empty);
+            }
+            catch (Exception ex)
+            {
+                PluginLog.Warning(ex, "Failed to refresh hardware snapshot");
             }
             finally
             {
-                this._refreshLock.Release();
+                Interlocked.Exchange(ref this._isFetching, 0);
             }
         }
 
-        public String GetButtonText(HardwareStatKind kind)
+        // Reads are non-blocking: they return whatever the background poll last cached,
+        // never wait on the network themselves.
+        public HardwareDisplayData GetDisplay(HardwareStatKind kind) => this._snapshot.ToDisplay(kind);
+
+        public Double[] GetHistory(HardwareStatKind kind)
         {
-            try
+            lock (this._historyLock)
             {
-                var snapshot = this.GetSnapshotAsync().GetAwaiter().GetResult();
-                return snapshot.Format(kind);
-            }
-            catch (Exception ex)
-            {
-                PluginLog.Warning(ex, $"Failed to get {kind} stats");
-                return HardwareSnapshot.Unavailable("API error").Format(kind);
+                return this._history[(Int32)kind].ToArray();
             }
         }
 
-        public HardwareDisplayData GetDisplay(HardwareStatKind kind)
+        private void PushHistory(HardwareSnapshot snapshot)
         {
-            try
+            if (!snapshot.Available)
             {
-                var snapshot = this.GetSnapshotAsync().GetAwaiter().GetResult();
-                return snapshot.ToDisplay(kind);
+                return;
             }
-            catch (Exception ex)
+
+            lock (this._historyLock)
             {
-                PluginLog.Warning(ex, $"Failed to get {kind} stats");
-                return HardwareDisplayData.Offline(kind.ToString().ToUpper(), "API error");
+                foreach (HardwareStatKind kind in Enum.GetValues(typeof(HardwareStatKind)))
+                {
+                    var load = snapshot.LoadOf(kind);
+                    if (!load.HasValue)
+                    {
+                        continue;
+                    }
+
+                    var history = this._history[(Int32)kind];
+                    history.Add(load.Value);
+                    if (history.Count > HistoryLength)
+                    {
+                        history.RemoveRange(0, history.Count - HistoryLength);
+                    }
+                }
             }
         }
 
         public void Dispose()
         {
-            this._httpClient?.Dispose();
-            this._refreshLock?.Dispose();
+            if (this._disposed)
+            {
+                return;
+            }
+
+            this._disposed = true;
+            this._pollTimer.Stop();
+            this._pollTimer.Elapsed -= this.OnPollTimerElapsed;
+            this._pollTimer.Dispose();
+            this._httpClient.Dispose();
         }
 
         private async Task<HardwareSnapshot> FetchSnapshotAsync()
@@ -132,11 +179,27 @@ namespace Loupedeck.HardwareMonitorPlugin
 
                 FlattenSensors(root, sensors, String.Empty, String.Empty, String.Empty);
 
-                return HardwareSnapshot.FromSensors(sensors);
+                var snapshot = HardwareSnapshot.FromSensors(sensors);
+
+                if (this._isConnected != true)
+                {
+                    PluginLog.Info(this._isConnected == false
+                        ? "Connection to LibreHardwareMonitor restored"
+                        : "Connected to LibreHardwareMonitor");
+                    this._isConnected = true;
+                }
+
+                return snapshot;
             }
             catch (Exception ex)
             {
-                PluginLog.Error(ex, "Failed to fetch hardware snapshot from local server");
+                // Only the transition is logged: while LibreHardwareMonitor is down this runs every poll.
+                if (this._isConnected != false)
+                {
+                    PluginLog.Error(ex, "Lost connection to LibreHardwareMonitor (will keep retrying silently)");
+                    this._isConnected = false;
+                }
+
                 return HardwareSnapshot.Unavailable("No connection");
             }
         }
@@ -185,17 +248,14 @@ namespace Loupedeck.HardwareMonitorPlugin
                         }
                     }
 
-                    var sensor = new SensorValue
-                    {
-                        SensorId = sensorId,
-                        ValueText = TryGetString(element, "Value") ?? String.Empty,
-                        Name = TryGetName(element) ?? String.Empty,
-                        Type = type ?? String.Empty,
-                        HardwareType = hardwareType ?? String.Empty,
-                        HardwareName = hardwareName,
-                        DevicePath = devicePath,
-                    };
-                    result.Add(sensor);
+                    result.Add(new SensorValue(
+                        sensorId,
+                        TryGetString(element, "Value") ?? String.Empty,
+                        TryGetName(element) ?? String.Empty,
+                        type ?? String.Empty,
+                        hardwareType ?? String.Empty,
+                        hardwareName,
+                        devicePath));
                     return;
                 }
 
@@ -322,38 +382,52 @@ namespace Loupedeck.HardwareMonitorPlugin
             return null;
         }
 
-        private struct SensorValue
+        // Lowercased strings and the parsed number are computed once at construction; the matchers
+        // read them several times per sensor on every poll.
+        private readonly struct SensorValue
         {
-            public string SensorId { get; set; }
-            public string ValueText { get; set; }
-            public string Name { get; set; }
-            public string Type { get; set; }
-            public string HardwareType { get; set; }
-            public string HardwareName { get; set; }
-            public string DevicePath { get; set; }
-
-            public string PathLower => this.SensorId?.ToLowerInvariant() ?? String.Empty;
-            public string NameLower => this.Name?.ToLowerInvariant() ?? String.Empty;
-            public string TypeLower => this.Type?.ToLowerInvariant() ?? String.Empty;
-
-            public Double? NumericValue
+            public SensorValue(String sensorId, String valueText, String name, String type, String hardwareType, String hardwareName, String devicePath)
             {
-                get
+                this.SensorId = sensorId;
+                this.Name = name;
+                this.Type = type;
+                this.HardwareType = hardwareType;
+                this.HardwareName = hardwareName;
+                this.DevicePath = devicePath;
+
+                this.PathLower = sensorId?.ToLowerInvariant() ?? String.Empty;
+                this.NameLower = name?.ToLowerInvariant() ?? String.Empty;
+                this.TypeLower = type?.ToLowerInvariant() ?? String.Empty;
+                this.NumericValue = ParseNumeric(valueText);
+            }
+
+            public String SensorId { get; }
+            public String Name { get; }
+            public String Type { get; }
+            public String HardwareType { get; }
+            public String HardwareName { get; }
+            public String DevicePath { get; }
+
+            public String PathLower { get; }
+            public String NameLower { get; }
+            public String TypeLower { get; }
+            public Double? NumericValue { get; }
+
+            private static Double? ParseNumeric(String valueText)
+            {
+                if (String.IsNullOrWhiteSpace(valueText))
                 {
-                    if (String.IsNullOrWhiteSpace(this.ValueText))
-                    {
-                        return null;
-                    }
-
-                    var text = this.ValueText.Trim();
-                    if (Double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
-                    {
-                        return value;
-                    }
-
-                    var filtered = new string(this.ValueText.Where(c => Char.IsDigit(c) || c == '.' || c == ',').ToArray()).Replace(',', '.');
-                    return Double.TryParse(filtered, NumberStyles.Float, CultureInfo.InvariantCulture, out value) ? value : (Double?)null;
+                    return null;
                 }
+
+                var text = valueText.Trim();
+                if (Double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
+                {
+                    return value;
+                }
+
+                var filtered = new String(valueText.Where(c => Char.IsDigit(c) || c == '.' || c == ',').ToArray()).Replace(',', '.');
+                return Double.TryParse(filtered, NumberStyles.Float, CultureInfo.InvariantCulture, out value) ? value : (Double?)null;
             }
         }
 
@@ -369,7 +443,6 @@ namespace Loupedeck.HardwareMonitorPlugin
 
             // GPU Stats
             public double? GpuLoadPercent { get; private set; }
-            public double? GpuClockGHz { get; private set; }
             public double? GpuTempC { get; private set; }
             public double? GpuVramUsedMb { get; private set; }
             public double? GpuVramTotalMb { get; private set; }
@@ -416,12 +489,6 @@ namespace Loupedeck.HardwareMonitorPlugin
                 }
 
                 snapshot.GpuLoadPercent = MaxValue(primary, "load", "core", "gpu");
-                var gpuClockMhz = MaxValue(primary, "clock", "core");
-                if (gpuClockMhz.HasValue)
-                {
-                    snapshot.GpuClockGHz = gpuClockMhz.Value / 1000.0;
-                }
-
                 snapshot.GpuTempC = MaxValue(primary, "temperature", "core", "gpu");
                 snapshot.GpuVramUsedMb = NamedSensor(primary, "gpu memory used", "dedicated memory used", "memory used");
                 var vramFreeMb = NamedSensor(primary, "gpu memory free", "dedicated memory free", "memory free");
@@ -448,16 +515,12 @@ namespace Loupedeck.HardwareMonitorPlugin
                 return snapshot;
             }
 
-            public String Format(HardwareStatKind kind)
+            public Double? LoadOf(HardwareStatKind kind) => kind switch
             {
-                var data = this.ToDisplay(kind);
-                if (!data.Available)
-                {
-                    return $"{kind.ToString().ToUpper()}{Environment.NewLine}Offline{Environment.NewLine}--";
-                }
-
-                return String.Join(Environment.NewLine, data.Lines);
-            }
+                HardwareStatKind.Cpu => this.CpuLoadPercent,
+                HardwareStatKind.Gpu => this.GpuLoadPercent,
+                _ => this.RamLoadPercent,
+            };
 
             public HardwareDisplayData ToDisplay(HardwareStatKind kind)
             {
@@ -472,28 +535,21 @@ namespace Loupedeck.HardwareMonitorPlugin
                     case HardwareStatKind.Cpu:
                         data.LoadPercent = this.CpuLoadPercent;
                         data.ColorValue = this.CpuTempC;
+                        data.TempC = this.CpuTempC;
+                        data.TempText = this.FormatTemp(this.CpuTempC);
                         data.LeftValue = this.FormatPercent(this.CpuLoadPercent);
-                        data.RightValue = this.FormatTemp(this.CpuTempC);
+                        data.RightValue = data.TempText;
                         data.Footer1 = this.FormatMhz(this.CpuClockGHz);
-                        data.Lines = new[]
-                        {
-                            $"CPU {this.FormatTemp(this.CpuTempC)}",
-                            $"{this.FormatPercent(this.CpuLoadPercent)} / {this.FormatGhz(this.CpuClockGHz)}",
-                        };
                         break;
 
                     case HardwareStatKind.Gpu:
                         data.LoadPercent = this.GpuLoadPercent;
                         data.ColorValue = this.GpuTempC;
+                        data.TempC = this.GpuTempC;
+                        data.TempText = this.FormatTemp(this.GpuTempC);
                         data.LeftValue = this.FormatPercent(this.GpuLoadPercent);
-                        data.RightValue = this.FormatTemp(this.GpuTempC);
+                        data.RightValue = data.TempText;
                         data.Footer1 = this.FormatVramSpec();
-                        data.Lines = new[]
-                        {
-                            $"GPU {this.FormatTemp(this.GpuTempC)}",
-                            $"{this.FormatPercent(this.GpuLoadPercent)} / {this.FormatGhz(this.GpuClockGHz)}",
-                            this.FormatVram(),
-                        };
                         break;
 
                     case HardwareStatKind.Ram:
@@ -502,38 +558,22 @@ namespace Loupedeck.HardwareMonitorPlugin
                         data.RightValue = this.FormatPercent(this.RamLoadPercent);
                         data.Footer1 = this.FormatRamUsedTotal();
                         data.Footer2 = this.FormatRamFree();
-                        data.Lines = new[]
-                        {
-                            $"RAM {this.FormatPercent(this.RamLoadPercent)}",
-                            $"{this.FormatGb(this.RamUsedGb)} / {this.FormatTotalGb(this.RamTotalGb)}",
-                            this.FormatRamFree(),
-                        };
-                        break;
-
-                    default:
-                        data.Lines = new[] { "Hardware" };
                         break;
                 }
 
+                data.LoadText = this.FormatPercent(data.LoadPercent);
+                data.Secondary = data.TempText ?? this.FormatRamUsedShort();
                 return data;
             }
+
+            private String FormatRamUsedShort()
+                => this.RamUsedGb.HasValue ? $"{this.RamUsedGb.Value.ToString("F1", CultureInfo.InvariantCulture)}G" : "--G";
 
             private String FormatPercent(Double? value) => value.HasValue ? $"{value.Value.ToString("F0", CultureInfo.InvariantCulture)}%" : "--%";
 
             private String FormatTemp(Double? value) => value.HasValue ? $"{value.Value.ToString("F0", CultureInfo.InvariantCulture)}°C" : "--°C";
 
-            private String FormatGhz(Double? value) => value.HasValue ? $"{value.Value.ToString("F1", CultureInfo.InvariantCulture)}Ghz" : "--Ghz";
-
             private String FormatMhz(Double? valueGhZ) => valueGhZ.HasValue ? $"{(valueGhZ.Value * 1000.0).ToString("F0", CultureInfo.InvariantCulture)} MHz" : "-- MHz";
-
-            private String FormatGb(Double? value) => value.HasValue ? value.Value.ToString("F1", CultureInfo.InvariantCulture) : "--";
-
-            private String FormatTotalGb(Double? value) => value.HasValue ? $"{Math.Round(value.Value, 0).ToString("F0", CultureInfo.InvariantCulture)}GB" : "--GB";
-
-            private Double? RamAvailableGb() =>
-                (this.RamTotalGb.HasValue && this.RamUsedGb.HasValue)
-                    ? this.RamTotalGb.Value - this.RamUsedGb.Value
-                    : (Double?)null;
 
             private String FormatVramSpec()
             {
@@ -552,23 +592,6 @@ namespace Loupedeck.HardwareMonitorPlugin
                     ? $"{this.RamUsedGb.Value.ToString("F1", CultureInfo.InvariantCulture)} / {Math.Round(this.RamTotalGb.Value, 0).ToString("F0", CultureInfo.InvariantCulture)} GB"
                     : "--";
 
-            private String FormatVram()
-            {
-                if (!this.GpuVramUsedMb.HasValue)
-                {
-                    return "-- GB";
-                }
-
-                var usedGb = this.GpuVramUsedMb.Value / 1024.0;
-                if (this.GpuVramTotalMb.HasValue)
-                {
-                    var totalGb = Math.Round(this.GpuVramTotalMb.Value / 1024.0, 0);
-                    return $"{usedGb:F1} / {totalGb}GB";
-                }
-
-                return $"{usedGb:F1} GB";
-            }
-
             private String FormatRamFree()
                 => (this.RamTotalGb.HasValue && this.RamUsedGb.HasValue)
                     ? $"Free: {Math.Round(this.RamTotalGb.Value - this.RamUsedGb.Value, 1).ToString("F1", CultureInfo.InvariantCulture)} GB"
@@ -581,9 +604,16 @@ namespace Loupedeck.HardwareMonitorPlugin
         public Boolean Available { get; set; }
         public String Title { get; set; }
         public String Message { get; set; }
-        public String[] Lines { get; set; }
         public Double? LoadPercent { get; set; }
         public Double? ColorValue { get; set; }
+        public String LoadText { get; set; }
+        public Double? TempC { get; set; }
+
+        // CPU/GPU temperature text; null for RAM.
+        public String TempText { get; set; }
+
+        // Short second value for compact cards: temperature for CPU/GPU, used GB for RAM.
+        public String Secondary { get; set; }
         public String LeftValue { get; set; }
         public String RightValue { get; set; }
         public String Footer1 { get; set; }

@@ -2,7 +2,8 @@ namespace Loupedeck.HardwareMonitorPlugin
 {
     using System;
 
-    // This class can be used to connect the Loupedeck plugin to an application.
+    // Not linked to any application, but do not delete: Logi Plugin Service refuses to load
+    // a plugin assembly that has no ClientApplication subclass ("Cannot load plugin").
 
     public class HardwareMonitorApplication : ClientApplication
     {
