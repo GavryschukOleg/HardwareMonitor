@@ -18,7 +18,7 @@ description: Shows live CPU, GPU and RAM stats from LibreHardwareMonitor on devi
 pluginFileName: HardwareMonitorPlugin.dll
 
 # Plugin version.
-version: 1.2
+version: 1.3
 
 # Author of the plugin. The author can be a company or an individual developer.
 author: GO

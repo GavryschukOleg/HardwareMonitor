@@ -145,7 +145,7 @@ namespace Loupedeck.HardwareMonitorPlugin
             // Text inside the ring stays within its inner diameter, minus a little air.
             var inner = 2f * (radius - stroke / 2f) - f.L(26);
             var loadFont = FitFont(data.LoadText, f.Font(40), inner);
-            var secondaryFont = FitFont(data.Secondary, f.Font(20), inner * 0.9f);
+            var secondaryFont = FitFont(data.Secondary, f.Font(24), inner * 0.9f);
             var gap = f.L(9);
             var blockHeight = Cap(loadFont) + gap + Cap(secondaryFont);
             var loadTop = cy - blockHeight / 2 - f.L(4);
@@ -153,7 +153,7 @@ namespace Loupedeck.HardwareMonitorPlugin
             Label(builder, data.LoadText, cx, loadTop, loadFont, White, Align.Center);
             Label(builder, data.Secondary, cx, loadTop + Cap(loadFont) + gap, secondaryFont, SecondaryColor(data), Align.Center);
 
-            var titleFont = f.Font(20);
+            var titleFont = f.Font(22);
             Label(builder, data.Title, cx, f.Y(168) - Cap(titleFont), titleFont, Gray, Align.Center);
         }
 
@@ -192,10 +192,10 @@ namespace Loupedeck.HardwareMonitorPlugin
 
             var line1 = data.TempText ?? data.Footer1;
             var line2 = data.TempText != null ? data.Footer1 : data.Footer2;
-            var line1Font = FitFont(line1, f.Font(17), right - left);
-            var line2Font = FitFont(line2, f.Font(17), right - left);
-            var line2Top = f.Y(166) - Cap(line2Font);
-            var line1Top = line2Top - f.L(9) - Cap(line1Font);
+            var line1Font = FitFont(line1, f.Font(23), right - left);
+            var line2Font = FitFont(line2, f.Font(23), right - left);
+            var line2Top = f.Y(168) - Cap(line2Font);
+            var line1Top = line2Top - f.L(10) - Cap(line1Font);
             Label(builder, line1, left, line1Top, line1Font, White, Align.Left);
             Label(builder, line2, left, line2Top, line2Font, White, Align.Left);
         }
@@ -210,7 +210,7 @@ namespace Loupedeck.HardwareMonitorPlugin
             var left = f.X(14);
             var right = f.X(166);
 
-            var titleFont = f.Font(20);
+            var titleFont = f.Font(22);
             var titleTop = f.Y(16);
             Label(builder, data.Title, left, titleTop, titleFont, Gray, Align.Left);
 
@@ -222,12 +222,12 @@ namespace Loupedeck.HardwareMonitorPlugin
             var secondaryTop = numberTop + Cap(numberFont) + f.L(14);
             if (data.TempText != null)
             {
-                var font = FitFont(data.TempText, f.Font(24), right - left);
+                var font = FitFont(data.TempText, f.Font(28), right - left);
                 Label(builder, data.TempText, left, secondaryTop, font, ColorForValue(data.TempC), Align.Left);
             }
             else
             {
-                var font = FitFont(data.Footer1, f.Font(20), right - left);
+                var font = FitFont(data.Footer1, f.Font(24), right - left);
                 Label(builder, data.Footer1, left, secondaryTop, font, White, Align.Left);
             }
 
@@ -243,7 +243,7 @@ namespace Loupedeck.HardwareMonitorPlugin
             var left = f.X(12);
             var right = f.X(168);
 
-            var titleFont = f.Font(18);
+            var titleFont = f.Font(21);
             var titleTop = f.Y(12);
             Label(builder, data.Title, left, titleTop, titleFont, Light, Align.Left);
             if (data.TempText != null)
@@ -255,7 +255,7 @@ namespace Loupedeck.HardwareMonitorPlugin
             var valueTop = titleTop + Cap(titleFont) + f.L(9);
             Label(builder, data.LoadText, left, valueTop, valueFont, White, Align.Left);
 
-            var footerFont = FitFont(data.Footer1, f.Font(15), right - left);
+            var footerFont = FitFont(data.Footer1, f.Font(20), right - left);
             var footerTop = valueTop + Cap(valueFont) + f.L(9);
             Label(builder, data.Footer1, left, footerTop, footerFont, White, Align.Left);
 
@@ -304,8 +304,8 @@ namespace Loupedeck.HardwareMonitorPlugin
             var f = new Frame(builder);
             var left = f.X(12);
             var right = f.X(168);
-            var titleFont = f.Font(18);
-            var valueFont = f.Font(20);
+            var titleFont = f.Font(20);
+            var valueFont = f.Font(22);
             var barHeight = f.L(8);
             var textHeight = Math.Max(Cap(titleFont), Cap(valueFont));
             var barGap = f.L(7);
@@ -327,7 +327,7 @@ namespace Loupedeck.HardwareMonitorPlugin
                 // The secondary value fills the gap between title and value only if it fits there.
                 var secondaryLeft = left + Measure(row.Title, titleFont) + f.L(7);
                 var secondaryRoom = right - Measure(row.LoadText, valueFont) - f.L(7) - secondaryLeft;
-                var secondaryFont = FitFont(row.Secondary, f.Font(14), secondaryRoom);
+                var secondaryFont = FitFont(row.Secondary, f.Font(18), secondaryRoom);
                 if (Measure(row.Secondary, secondaryFont) <= secondaryRoom)
                 {
                     Label(builder, row.Secondary, secondaryLeft, textBottom - Cap(secondaryFont), secondaryFont, SecondaryColor(row), Align.Left);
@@ -342,8 +342,8 @@ namespace Loupedeck.HardwareMonitorPlugin
         {
             var f = new Frame(builder);
             var centers = new[] { 38f, 90f, 142f };
-            var numberFont = f.Font(20);
-            var labelFont = f.Font(16);
+            var numberFont = f.Font(23);
+            var labelFont = f.Font(19);
             var numberTop = f.Y(16);
             var labelTop = f.Y(166) - Cap(labelFont);
             var trackTop = numberTop + Cap(numberFont) + f.L(9);
@@ -377,18 +377,18 @@ namespace Loupedeck.HardwareMonitorPlugin
         {
             var f = new Frame(builder);
             var centers = new[] { 36f, 90f, 144f };
-            var radius = f.L(20);
+            var radius = f.L(22);
             var stroke = Math.Max(2f, 6f * f.S);
             var ringOuter = 2 * radius + (Int32)Math.Ceiling(stroke);
             var columnWidth = f.L(52);
 
-            var headerFont = f.Font(15);
-            var labelFont = f.Font(13);
-            var secondaryFont = f.Font(14);
+            var headerFont = f.Font(16);
+            var labelFont = f.Font(17);
+            var secondaryFont = f.Font(19);
             foreach (var ring in rings)
             {
-                labelFont = Math.Min(labelFont, FitFont(ring.Title, f.Font(13), columnWidth - f.L(8)));
-                secondaryFont = Math.Min(secondaryFont, FitFont(ring.Secondary, f.Font(14), columnWidth));
+                labelFont = Math.Min(labelFont, FitFont(ring.Title, f.Font(17), columnWidth - f.L(8)));
+                secondaryFont = Math.Min(secondaryFont, FitFont(ring.Secondary, f.Font(19), columnWidth));
             }
 
             var headerGap = f.L(12);
@@ -416,7 +416,7 @@ namespace Loupedeck.HardwareMonitorPlugin
                 }
 
                 var number = LoadNumber(ring.LoadPercent);
-                var numberFont = FitFont(number, f.Font(15), numberRoom, 7);
+                var numberFont = FitFont(number, f.Font(18), numberRoom, 7);
                 Label(builder, number, cx, cy - Cap(numberFont) / 2, numberFont, White, Align.Center);
                 Label(builder, ring.Title, cx, labelTop, labelFont, Gray, Align.Center);
                 Label(builder, ring.Secondary, cx, secondaryTop, secondaryFont, SecondaryColor(ring), Align.Center);
