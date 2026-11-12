@@ -401,3 +401,5 @@ FodyWeavers.xsd
 
 # Logi plugin package (regenerable with `logiplugintool pack`)
 *.lplug4
+# Editor settings (personal)
+.vscode/
